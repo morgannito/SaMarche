@@ -6,7 +6,8 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "test:e2e": "electron test/ipc-surface.e2e.js"
+    "test": "node --test test/resize-request.test.js",
+    "test:e2e": "electron test/ipc-surface.e2e.js && electron test/main-guards.e2e.js"
   },
   "keywords": [],
   "author": "",

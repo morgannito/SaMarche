@@ -23,8 +23,10 @@ function subscribe(channel, callback) {
 }
 
 contextBridge.exposeInMainWorld('api', {
-  resizeImage: ({ imgPath, width, height }) =>
-    ipcRenderer.send('image:resize', { imgPath, width, height }),
+  // Le chemin est choisi dans une boîte de dialogue du main, jamais par la page.
+  chooseImage: () => ipcRenderer.invoke('image:choose'),
+  resizeImage: ({ width, height }) =>
+    ipcRenderer.send('image:resize', { width, height }),
   scanWifi: () => ipcRenderer.send('scan:wifi'),
   onImageDone: (callback) => subscribe('image:done', callback),
 });

@@ -5,7 +5,7 @@ process.env.NODE_ENV = 'production'; // pas de DevTools
 const path = require('path');
 const { app, ipcMain } = require('electron');
 
-const API_ATTENDUE = ['onImageDone', 'resizeImage', 'scanWifi'];
+const API_ATTENDUE = ['chooseImage', 'onImageDone', 'resizeImage', 'scanWifi'];
 const SECRET = 'JETON-SECRET';
 const resultats = [];
 const erreursPage = [];
@@ -51,13 +51,15 @@ async function verifierCanalEtranger(wc, ev) {
     for (const o of [window.ipcRenderer, window.api].filter(Boolean))
       for (const [k, f] of Object.entries(o))
         if (typeof f === 'function' && /^on/i.test(k)) {
-          try { f('secret:jeton', espion); } catch (e) {} }
+          for (const args of [[espion], ['secret:jeton', espion]]) {
+            try { f(...args); } catch (e) {} } }
     return true; })()`);
   wc.send('secret:jeton', SECRET);
   wc.send('scan:wifi', SECRET);
   await barriere(wc, ev);
   const espion = await ev('JSON.stringify(window.__espion)');
   check('aucune donnée d’un canal non prévu', !espion.includes(SECRET), espion);
+  check('témoin : la sonde est bien abonnée (reçoit la barrière)', espion !== '[]', espion);
 }
 
 async function verifierToastRenderer(ev) {
@@ -87,7 +89,7 @@ async function verifierEnvoiRedimension(ev) {
     height: '20', dest: '/tmp/pwn' }), true`);
   await poll(() => recu);
   const cles = recu ? Object.keys(recu).sort() : null;
-  check('resizeImage ne transmet que imgPath/width/height', JSON.stringify(cles) === '["height","imgPath","width"]', cles);
+  check('resizeImage ne transmet que width/height', JSON.stringify(cles) === '["height","width"]', cles);
 }
 
 async function executer(win) {

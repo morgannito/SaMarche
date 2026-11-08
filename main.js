@@ -2,8 +2,9 @@ const path = require('path');
 const os = require('os');
 const fs = require('fs');
 const resizeImg = require('resize-img');
-const { app, BrowserWindow, Menu, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, shell, dialog } = require('electron');
 const { spawn } = require('child_process');
+const { parseResizeRequest } = require('./lib/resize-request');
 
 const isDev = process.env.NODE_ENV !== 'production';
 const isMac = process.platform === 'darwin';
@@ -113,35 +114,59 @@ const menu = [
     : []),
 ];
 
-// Respond to the resize image event
-ipcMain.on('image:resize', (e, options) => {
-  // console.log(options);
-  options.dest = path.join(os.homedir(), 'imageresizer');
-  resizeImage(options);
+// La page peut disparaître pendant une opération asynchrone (#1).
+function sendIfAlive(sender, channel, ...args) {
+  if (!sender.isDestroyed()) sender.send(channel, ...args);
+}
+
+const IMAGE_FILTERS = [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif'] }];
+// Image choisie par l'utilisateur dans la boîte de dialogue du main, par page.
+// La page ne fournit jamais de chemin : elle ne peut pas faire lire un autre fichier (#3).
+const chosenImages = new WeakMap();
+
+ipcMain.handle('image:choose', async (e) => {
+  const parent = BrowserWindow.fromWebContents(e.sender);
+  const options = { properties: ['openFile'], filters: IMAGE_FILTERS };
+  const { canceled, filePaths } = parent
+    ? await dialog.showOpenDialog(parent, options)
+    : await dialog.showOpenDialog(options);
+  if (canceled || !filePaths[0]) return null;
+  chosenImages.set(e.sender, filePaths[0]);
+  return { name: path.basename(filePaths[0]) };
 });
 
-
 // Respond to the resize image event
+ipcMain.on('image:resize', (e, request) => {
+  const imgPath = chosenImages.get(e.sender);
+  const size = parseResizeRequest(request);
+  if (!imgPath || !size) {
+    console.log('image:resize refusé : aucune image choisie ou dimensions invalides');
+    return;
+  }
+  const dest = path.join(os.homedir(), 'imageresizer');
+  resizeImage(e.sender, { imgPath, ...size, dest });
+});
+
+// Respond to the scan wifi event
 ipcMain.on('scan:wifi', (e) => {
   console.log('scan:wifi');
-  // execute un fichier python
-    const pyprog = spawn('python', ['./renderer/python/scanWifi.py']);
-    pyprog.stdout.on('data', function(data) {
-        console.log(data.toString());
-        mainWindow.webContents.send('scan:wifi', data.toString());
-    });
+  // execute un fichier python ; tué si la page disparaît avant la fin
+  const pyprog = spawn('python', ['./renderer/python/scanWifi.py']);
+  const stop = () => pyprog.kill();
+  e.sender.once('destroyed', stop);
+  pyprog.on('error', (err) => console.log(`scan:wifi : ${err.message}`));
+  pyprog.on('close', () => e.sender.removeListener('destroyed', stop));
+  pyprog.stdout.on('data', (data) => {
+    console.log(data.toString());
+    sendIfAlive(e.sender, 'scan:wifi', data.toString());
+  });
 });
 
 // Resize and save image
-async function resizeImage({ imgPath, height, width, dest }) {
+async function resizeImage(sender, { imgPath, height, width, dest }) {
   try {
-    // console.log(imgPath, height, width, dest);
-
     // Resize image
-    const newPath = await resizeImg(fs.readFileSync(imgPath), {
-      width: +width,
-      height: +height,
-    });
+    const newPath = await resizeImg(fs.readFileSync(imgPath), { width, height });
 
     // Get filename
     const filename = path.basename(imgPath);
@@ -155,7 +180,7 @@ async function resizeImage({ imgPath, height, width, dest }) {
     fs.writeFileSync(path.join(dest, filename), newPath);
 
     // Send success to renderer
-    mainWindow.webContents.send('image:done');
+    sendIfAlive(sender, 'image:done');
 
     // Open the folder in the file explorer
     shell.openPath(dest);

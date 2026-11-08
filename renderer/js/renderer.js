@@ -1,5 +1,4 @@
 const form = document.querySelector('#img-form');
-const img = document.querySelector('#img');
 const outputPath = document.querySelector('#output-path');
 const filename = document.querySelector('#filename');
 const heightInput = document.querySelector('#height');
@@ -12,59 +11,29 @@ function scanWifiNetworks() {
 }
 
 
-// Load image and show form
-function loadImage(e) {
-  const file = e.target.files[0];
-
-  // Check if file is an image
-  if (!isFileImage(file)) {
-    alertError('Please select an image');
-    return;
-  }
-
-  // Add current height and width to form using the URL API
-  const image = new Image();
-  image.src = URL.createObjectURL(file);
-  image.onload = function () {
-    widthInput.value = this.width;
-    heightInput.value = this.height;
-  };
+// Choose image (dialog opened by the main process) and show form
+async function loadImage() {
+  const image = await api.chooseImage();
+  if (!image) return;
 
   // Show form, image name and output path
   form.style.display = 'block';
-  filename.innerHTML = img.files[0].name;
+  filename.textContent = image.name;
   outputPath.innerText = path.join(os.homedir(), 'imageresizer');
 }
 
-// Make sure file is an image
-function isFileImage(file) {
-  const acceptedImageTypes = ['image/gif', 'image/jpeg', 'image/png'];
-  return file && acceptedImageTypes.includes(file['type']);
-}
-
-// Resize image
+// Resize image (the main process validates the dimensions)
 function resizeImage(e) {
   e.preventDefault();
-
-  if (!img.files[0]) {
-    alertError('Please upload an image');
-    return;
-  }
 
   if (widthInput.value === '' || heightInput.value === '') {
     alertError('Please enter a width and height');
     return;
   }
 
-  // Electron adds a bunch of extra properties to the file object including the path
-  const imgPath = img.files[0].path;
-  const width = widthInput.value;
-  const height = heightInput.value;
-
   api.resizeImage({
-    imgPath,
-    height,
-    width,
+    height: heightInput.value,
+    width: widthInput.value,
   });
 }
 
@@ -99,8 +68,8 @@ function alertError(message) {
   });
 }
 
-// File select listener
-// img.addEventListener('change', loadImage);
+// Image choice listener: no trigger in index.html (the <input type="file"> is
+// commented out); attach loadImage to a button to bring the resize form back.
 // Form submit listener
 form.addEventListener('submit', resizeImage);
 // Scan wifi listener
