@@ -4,6 +4,7 @@ const filename = document.querySelector('#filename');
 const heightInput = document.querySelector('#height');
 const widthInput = document.querySelector('#width');
 const scanWifi = document.querySelector('#scanWifi');
+const chooseImageButton = document.querySelector('#chooseImage');
 
 function scanWifiNetworks() {
   console.log('scan wifi networks');
@@ -13,7 +14,13 @@ function scanWifiNetworks() {
 
 // Choose image (dialog opened by the main process) and show form
 async function loadImage() {
-  const image = await api.chooseImage();
+  let image;
+  try {
+    image = await api.chooseImage();
+  } catch (err) {
+    alertError('Image selection failed');
+    return;
+  }
   if (!image) return;
 
   // Show form, image name and output path
@@ -68,8 +75,8 @@ function alertError(message) {
   });
 }
 
-// Image choice listener: no trigger in index.html (the <input type="file"> is
-// commented out); attach loadImage to a button to bring the resize form back.
+// Image choice listener
+chooseImageButton.addEventListener('click', loadImage);
 // Form submit listener
 form.addEventListener('submit', resizeImage);
 // Scan wifi listener

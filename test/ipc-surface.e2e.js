@@ -4,25 +4,12 @@
 process.env.NODE_ENV = 'production'; // pas de DevTools
 const path = require('path');
 const { app, ipcMain } = require('electron');
+const { creerBilan, poll, executerEtapes } = require('./e2e-outils');
 
 const API_ATTENDUE = ['chooseImage', 'onImageDone', 'resizeImage', 'scanWifi'];
 const SECRET = 'JETON-SECRET';
-const resultats = [];
+const { check, codeSortie } = creerBilan();
 const erreursPage = [];
-
-function check(nom, ok, detail) {
-  resultats.push(ok);
-  console.log(`${ok ? 'OK  ' : 'FAIL'} ${nom}${ok ? '' : ` → ${JSON.stringify(detail)}`}`);
-}
-
-async function poll(lire, ms = 5000) {
-  const fin = Date.now() + ms;
-  for (;;) {
-    const v = await lire();
-    if (v || Date.now() > fin) return v;
-    await new Promise((r) => setTimeout(r, 50));
-  }
-}
 
 // Barrière d'ordre : les messages IPC vers une même page sont livrés dans
 // l'ordre. Un image:done envoyé APRÈS les messages testés fait apparaître
@@ -95,12 +82,9 @@ async function verifierEnvoiRedimension(ev) {
 async function executer(win) {
   const wc = win.webContents;
   const ev = (js) => wc.executeJavaScript(js, true);
-  const etapes = [() => verifierSurface(ev), () => verifierCanalEtranger(wc, ev),
+  await executerEtapes([() => verifierSurface(ev), () => verifierCanalEtranger(wc, ev),
     () => verifierToastRenderer(ev), () => verifierDesabonnement(wc, ev),
-    () => verifierEnvoiRedimension(ev)];
-  for (const etape of etapes) {
-    try { await etape(); } catch (e) { check(`étape ${etape}`.slice(0, 60), false, String(e)); }
-  }
+    () => verifierEnvoiRedimension(ev)], check);
   check('aucune erreur console/preload', erreursPage.length === 0, erreursPage);
 }
 
@@ -108,11 +92,7 @@ function surveiller(win) {
   const wc = win.webContents;
   wc.on('console-message', (_e, niveau, msg) => { if (niveau >= 3) erreursPage.push(msg); });
   wc.on('preload-error', (_e, p, err) => erreursPage.push(`preload ${p}: ${err}`));
-  wc.once('did-finish-load', () => executer(win).finally(() => {
-    const echecs = resultats.filter((ok) => !ok).length;
-    console.log(`${resultats.length - echecs}/${resultats.length} OK`);
-    app.exit(echecs ? 1 : 0);
-  }));
+  wc.once('did-finish-load', () => executer(win).finally(() => app.exit(codeSortie())));
 }
 
 setTimeout(() => { console.log('FAIL délai dépassé'); app.exit(2); }, 30000).unref();

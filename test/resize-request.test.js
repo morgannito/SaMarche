@@ -2,7 +2,7 @@
 // Usage : npm test
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { parseDimension, parseResizeRequest, MAX_DIMENSION } = require('../lib/resize-request');
+const { parseDimension, parseResizeRequest, MAX_DIMENSION, MAX_PIXELS } = require('../lib/resize-request');
 
 test('dimensions acceptées : entiers de 1 à MAX_DIMENSION', () => {
   for (const [entree, attendu] of [['1', 1], ['10', 10], [' 20 ', 20], [42, 42],
@@ -21,6 +21,14 @@ test('dimensions refusées : zéro, négatif, décimal, notation exp., trop gran
 test('requête complète : les deux dimensions valides, rien d’autre conservé', () => {
   assert.deepEqual(parseResizeRequest({ width: '10', height: '20', imgPath: '/etc/x' }),
     { width: 10, height: 20 });
+});
+
+test('surface plafonnée à MAX_PIXELS (charge mémoire du main)', () => {
+  assert.equal(MAX_PIXELS, 40000000);
+  assert.deepEqual(parseResizeRequest({ width: '10000', height: '4000' }), { width: 10000, height: 4000 });
+  for (const [width, height] of [['10000', '4001'], ['7000', '7000'], ['10000', '10000']]) {
+    assert.equal(parseResizeRequest({ width, height }), null, `${width}x${height}`);
+  }
 });
 
 test('requête refusée si une dimension manque ou est invalide', () => {

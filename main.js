@@ -47,6 +47,13 @@ function createAboutWindow() {
    aboutWindow.loadFile(path.join(__dirname, './renderer/about.html'));
 }
 
+// No page may leave the app: no navigation, no new window (index.html and
+// about.html contain no link).
+app.on('web-contents-created', (_e, contents) => {
+  contents.on('will-navigate', (e) => e.preventDefault());
+  contents.setWindowOpenHandler(() => ({ action: 'deny' }));
+});
+
 // When the app is ready, create the window
 app.on('ready', () => {
   createMainWindow();
@@ -124,15 +131,26 @@ const IMAGE_FILTERS = [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif
 // La page ne fournit jamais de chemin : elle ne peut pas faire lire un autre fichier (#3).
 const chosenImages = new WeakMap();
 
-ipcMain.handle('image:choose', async (e) => {
-  const parent = BrowserWindow.fromWebContents(e.sender);
+async function chooseImageFor(sender) {
+  const parent = BrowserWindow.fromWebContents(sender);
   const options = { properties: ['openFile'], filters: IMAGE_FILTERS };
   const { canceled, filePaths } = parent
     ? await dialog.showOpenDialog(parent, options)
     : await dialog.showOpenDialog(options);
   if (canceled || !filePaths[0]) return null;
-  chosenImages.set(e.sender, filePaths[0]);
+  chosenImages.set(sender, filePaths[0]);
   return { name: path.basename(filePaths[0]) };
+}
+
+// Une seule boîte de dialogue à la fois par page (double clic) : même réponse.
+const pendingChoices = new WeakMap();
+
+ipcMain.handle('image:choose', (e) => {
+  if (!pendingChoices.has(e.sender)) {
+    const choice = chooseImageFor(e.sender).finally(() => pendingChoices.delete(e.sender));
+    pendingChoices.set(e.sender, choice);
+  }
+  return pendingChoices.get(e.sender);
 });
 
 // Respond to the resize image event
@@ -147,19 +165,45 @@ ipcMain.on('image:resize', (e, request) => {
   resizeImage(e.sender, { imgPath, ...size, dest });
 });
 
+// Un scan à la fois par page, borné dans le temps ; python tué si la page
+// disparaît avant la fin (#1).
+const SCAN_TIMEOUT_MS = Number(process.env.SCAN_TIMEOUT_MS) || 60000;
+const runningScans = new WeakSet();
+
+function startWifiScan(sender) {
+  const pyprog = spawn('python', ['./renderer/python/scanWifi.py']);
+  runningScans.add(sender); // après spawn : une exception de spawn ne bloque pas le verrou
+  const stop = () => pyprog.kill();
+  let timer = null;
+  // Idempotent : rendu sur 'error' (spawn échoué), 'exit', 'close' ou délai dépassé.
+  const release = () => {
+    clearTimeout(timer);
+    runningScans.delete(sender);
+    sender.removeListener('destroyed', stop);
+  };
+  timer = setTimeout(() => {
+    console.log('scan:wifi : délai dépassé, script arrêté');
+    stop();
+    release();
+  }, SCAN_TIMEOUT_MS);
+  sender.once('destroyed', stop);
+  pyprog.on('error', (err) => { console.log(`scan:wifi : ${err.message}`); release(); });
+  pyprog.on('exit', release);
+  pyprog.on('close', release);
+  pyprog.stdout.on('data', (data) => {
+    console.log(data.toString());
+    sendIfAlive(sender, 'scan:wifi', data.toString());
+  });
+}
+
 // Respond to the scan wifi event
 ipcMain.on('scan:wifi', (e) => {
   console.log('scan:wifi');
-  // execute un fichier python ; tué si la page disparaît avant la fin
-  const pyprog = spawn('python', ['./renderer/python/scanWifi.py']);
-  const stop = () => pyprog.kill();
-  e.sender.once('destroyed', stop);
-  pyprog.on('error', (err) => console.log(`scan:wifi : ${err.message}`));
-  pyprog.on('close', () => e.sender.removeListener('destroyed', stop));
-  pyprog.stdout.on('data', (data) => {
-    console.log(data.toString());
-    sendIfAlive(e.sender, 'scan:wifi', data.toString());
-  });
+  if (runningScans.has(e.sender)) {
+    console.log('scan:wifi refusé : un scan est déjà en cours');
+    return;
+  }
+  startWifiScan(e.sender);
 });
 
 // Resize and save image
