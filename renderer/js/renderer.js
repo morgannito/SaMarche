@@ -7,9 +7,8 @@ const widthInput = document.querySelector('#width');
 const scanWifi = document.querySelector('#scanWifi');
 
 function scanWifiNetworks() {
-  // ipcRenderer.send('wifi:scan');
   console.log('scan wifi networks');
-  ipcRenderer.send('scan:wifi');
+  api.scanWifi();
 }
 
 
@@ -62,7 +61,7 @@ function resizeImage(e) {
   const width = widthInput.value;
   const height = heightInput.value;
 
-  ipcRenderer.send('image:resize', {
+  api.resizeImage({
     imgPath,
     height,
     width,
@@ -70,7 +69,7 @@ function resizeImage(e) {
 }
 
 // When done, show message
-ipcRenderer.on('image:done', () =>
+api.onImageDone(() =>
   alertSuccess(`Image resized to ${heightInput.value} x ${widthInput.value}`)
 );
 
