@@ -6,7 +6,8 @@ const path = require('path');
 const { app, ipcMain } = require('electron');
 const { creerBilan, poll, executerEtapes } = require('./e2e-outils');
 
-const API_ATTENDUE = ['chooseImage', 'onImageDone', 'resizeImage', 'scanWifi'];
+const API_ATTENDUE = ['chooseImage', 'onImageDone', 'onImageError', 'resizeImage', 'scanWifi'];
+const FAIT = { width: 1, height: 1 }; // contrat : image:done porte les dimensions produites
 const SECRET = 'JETON-SECRET';
 const { check, codeSortie } = creerBilan();
 const erreursPage = [];
@@ -17,7 +18,7 @@ const erreursPage = [];
 // précédents ont forcément été traités.
 async function barriere(wc, ev) {
   const avant = await ev('document.querySelectorAll(".toastify").length');
-  wc.send('image:done');
+  wc.send('image:done', FAIT);
   const vu = await poll(() => ev(`document.querySelectorAll(".toastify").length > ${avant}`));
   if (!vu) throw new Error('barrière : aucun toast de renderer.js');
 }
@@ -56,12 +57,12 @@ async function verifierToastRenderer(ev) {
 
 async function verifierDesabonnement(wc, ev) {
   const off = await ev(`(() => { window.__recus = [];
-    window.__off = window.api.onImageDone((...a) => window.__recus.push(a.length));
+    window.__off = window.api.onImageDone((...a) => window.__recus.push(a));
     return typeof window.__off; })()`);
   check('onImageDone rend une fonction de retrait', off === 'function', off);
   await barriere(wc, ev);
   const recus = await ev('JSON.stringify(window.__recus)');
-  check('callback appelé sans objet event', recus === '[0]', recus);
+  check('callback : données seules, sans objet event', recus === JSON.stringify([[FAIT]]), recus);
   await ev('window.__off(), true');
   await barriere(wc, ev);
   const apres = await ev('window.__recus.length');

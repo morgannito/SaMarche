@@ -29,6 +29,7 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.send('image:resize', { width, height }),
   scanWifi: () => ipcRenderer.send('scan:wifi'),
   onImageDone: (callback) => subscribe('image:done', callback),
+  onImageError: (callback) => subscribe('image:error', callback),
 });
 
 contextBridge.exposeInMainWorld('Toastify', {

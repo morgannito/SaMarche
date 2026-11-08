@@ -5,6 +5,7 @@ const resizeImg = require('resize-img');
 const { app, BrowserWindow, Menu, ipcMain, shell, dialog } = require('electron');
 const { spawn } = require('child_process');
 const { parseResizeRequest } = require('./lib/resize-request');
+const { sourceProblem } = require('./lib/image-size');
 
 const isDev = process.env.NODE_ENV !== 'production';
 const isMac = process.platform === 'darwin';
@@ -209,8 +210,16 @@ ipcMain.on('scan:wifi', (e) => {
 // Resize and save image
 async function resizeImage(sender, { imgPath, height, width, dest }) {
   try {
+    // Check the header before decoding (decompression bomb, unknown format)
+    const source = fs.readFileSync(imgPath);
+    const problem = sourceProblem(source);
+    if (problem) {
+      sendIfAlive(sender, 'image:error', { reason: problem });
+      return;
+    }
+
     // Resize image
-    const newPath = await resizeImg(fs.readFileSync(imgPath), { width, height });
+    const newPath = await resizeImg(source, { width, height });
 
     // Get filename
     const filename = path.basename(imgPath);
@@ -223,13 +232,14 @@ async function resizeImage(sender, { imgPath, height, width, dest }) {
     // Write the file to the destination folder
     fs.writeFileSync(path.join(dest, filename), newPath);
 
-    // Send success to renderer
-    sendIfAlive(sender, 'image:done');
+    // Send success to renderer, with the size actually produced (#9)
+    sendIfAlive(sender, 'image:done', { width, height });
 
     // Open the folder in the file explorer
     shell.openPath(dest);
   } catch (err) {
     console.log(err);
+    sendIfAlive(sender, 'image:error', { reason: 'failed' });
   }
 }
 

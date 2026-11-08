@@ -44,10 +44,16 @@ function resizeImage(e) {
   });
 }
 
-// When done, show message
-api.onImageDone(() =>
-  alertSuccess(`Image resized to ${heightInput.value} x ${widthInput.value}`)
+// When done, show the size actually produced by the main process (#9)
+api.onImageDone(({ width, height }) =>
+  alertSuccess(`Image resized to ${width} x ${height}`)
 );
+
+const IMAGE_ERRORS = {
+  'too-large': 'Image too large',
+  unsupported: 'Unsupported image format',
+};
+api.onImageError(({ reason }) => alertError(IMAGE_ERRORS[reason] || 'Resize failed'));
 
 function alertSuccess(message) {
   Toastify.toast({

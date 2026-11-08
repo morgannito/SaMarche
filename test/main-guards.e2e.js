@@ -9,6 +9,7 @@ const path = require('path');
 const childProcess = require('child_process');
 const electron = require('electron');
 const { creerBilan, poll, executerEtapes, faussePython } = require('./e2e-outils');
+const { readImageSize } = require('../lib/image-size');
 
 const { app, ipcMain, nativeImage, BrowserWindow } = electron;
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'samarche-'));
@@ -21,7 +22,8 @@ const exceptions = [];
 const erreursPage = [];
 const lus = [];
 const enfants = [];
-const doublures = { dialogue: 0, ouvertures: 0, echec: false };
+const GEANTE = path.join(TMP, 'choisie', 'geante.png');
+const doublures = { dialogue: 0, ouvertures: 0, echec: false, fichier: null };
 
 function installerDoublures() {
   const lire = fs.readFileSync;
@@ -31,7 +33,7 @@ function installerDoublures() {
     doublures.dialogue += 1;
     await new Promise((r) => setTimeout(r, 100));
     if (doublures.echec) throw new Error('boîte de dialogue indisponible');
-    return { canceled: false, filePaths: [CHOISIE] };
+    return { canceled: false, filePaths: [doublures.fichier || CHOISIE] };
   };
   electron.shell.openPath = async () => { doublures.ouvertures += 1; return ''; };
   childProcess.spawn = (cmd, args) => {
@@ -98,15 +100,17 @@ const toastAffiche = (ev, texte) => poll(() => ev(`[...document.querySelectorAll
 
 // Chemin RÉEL depuis le formulaire (invoke pour le choix, puis send) : prouve
 // que e.sender est le même WebContents dans handle() et dans on().
+// #9 : champs modifiés juste après l'envoi → le message garde la taille produite.
 async function verifierRedimensionLegitime(ev) {
   await ev(`(() => { document.querySelector('#width').value = '2';
     document.querySelector('#height').value = '3';
-    document.querySelector('#img-form').requestSubmit(); return true; })()`);
+    document.querySelector('#img-form').requestSubmit();
+    document.querySelector('#width').value = '99'; return true; })()`);
   const sortie = path.join(SORTIE, 'choisie.png');
   const ecrit = await poll(() => fs.existsSync(sortie));
   check('image choisie redimensionnée en 2x3 (formulaire)', ecrit && dimensionsPng(sortie) === '2x3', ecrit);
-  const toast = await toastAffiche(ev, 'Image resized to 3 x 2');
-  check('image:done reçu par la page (toast)', toast, toast);
+  const toast = await toastAffiche(ev, 'Image resized to 2 x 3');
+  check('#9 : message = taille produite, largeur x hauteur', toast, toast);
   check('dossier de sortie ouvert une fois', doublures.ouvertures === 1, doublures);
 }
 
@@ -114,6 +118,37 @@ function verifierCheminForgeApresChoix(wc) {
   lus.length = 0;
   emettreResize(wc, { imgPath: SECRET, width: '2', height: '2' });
   check('chemin forgé ignoré même après le choix', !lus.includes(SECRET), lus);
+}
+
+// En-tête PNG seul annonçant 20000x20000 (400 Mpx) : refus avant décodage.
+function ecrirePngGeant() {
+  const b = Buffer.alloc(33);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(b, 0);
+  b.writeUInt32BE(13, 8);
+  b.write('IHDR', 12, 'latin1');
+  b.writeUInt32BE(20000, 16);
+  b.writeUInt32BE(20000, 20);
+  fs.writeFileSync(GEANTE, b);
+}
+
+async function verifierSourceGeante(ev) {
+  ecrirePngGeant();
+  doublures.fichier = GEANTE;
+  await ev(`document.querySelector('#chooseImage').click(), true`);
+  await poll(() => ev(`document.querySelector('#filename').textContent === 'geante.png'`));
+  await ev(`(() => { document.querySelector('#width').value = '2';
+    document.querySelector('#height').value = '3';
+    document.querySelector('#img-form').requestSubmit(); return true; })()`);
+  const vu = await toastAffiche(ev, 'Image too large');
+  doublures.fichier = null;
+  check('source de 400 Mpx refusée avec message', vu && !fs.existsSync(path.join(SORTIE, 'geante.png')), vu);
+}
+
+// L'analyse d'en-tête lit aussi les vrais fichiers de l'encodeur Chromium.
+function verifierEnTetesReels() {
+  const img = nativeImage.createFromBitmap(Buffer.alloc(6 * 5 * 4, 128), { width: 6, height: 5 });
+  const tailles = [img.toPNG(), img.toJPEG(90)].map((b) => JSON.stringify(readImageSize(b)));
+  check('en-têtes PNG et JPEG réels lus (6x5)', tailles.every((t) => t === '{"width":6,"height":5}'), tailles);
 }
 
 // Échec de la boîte de dialogue : message affiché, pas de promesse non gérée
@@ -187,6 +222,7 @@ async function executer(win) {
   await executerEtapes([() => verifierCheminForge(wc), () => verifierChoixParBouton(ev),
     () => verifierAutrePage(), () => verifierDimensionsInvalides(wc),
     () => verifierRedimensionLegitime(ev), () => verifierCheminForgeApresChoix(wc),
+    () => verifierSourceGeante(ev), () => verifierEnTetesReels(),
     () => verifierChoixEchoue(ev), () => verifierErreurSpawn(wc, ev),
     () => verifierScanUnique(ev), () => verifierNavigation(wc, ev),
     () => verifierFenetreFermee(win)], check);
